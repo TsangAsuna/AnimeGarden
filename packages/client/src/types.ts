@@ -273,6 +273,14 @@ export type FilterOptions = {
   duplicate?: boolean;
 
   /**
+   * When true, unknown fansub/publisher names make the request fail with 400
+   * instead of being silently ignored.
+   *
+   * @default false
+   */
+  strict?: boolean;
+
+  /**
    * Resources uploaded after the specified date
    */
   after?: Date;
@@ -389,6 +397,14 @@ export type ResolvedFilterOptions = {
   provider?: ProviderType;
 
   duplicate?: boolean;
+
+  /**
+   * When true, unknown fansub/publisher names make the request fail with 400
+   * instead of being silently ignored.
+   *
+   * @default false
+   */
+  strict?: boolean;
 
   types?: string[];
 

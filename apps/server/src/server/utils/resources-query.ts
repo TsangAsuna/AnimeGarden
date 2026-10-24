@@ -1,7 +1,8 @@
 import {
   ResourcesDeepPaginationError,
   ResourcesSlowQueryBusyError,
-  ResourcesSlowQueryTimeoutError
+  ResourcesSlowQueryTimeoutError,
+  UnknownPartyFilterError
 } from '../../error.ts';
 
 import type { ResolvedPaginationOptions } from '@animegarden/client';
@@ -25,6 +26,13 @@ export function getResourcesQueryErrorResponse(
   error: unknown
 ): ResourcesQueryErrorResponse | undefined {
   if (error instanceof ResourcesDeepPaginationError) {
+    return {
+      status: 400,
+      message: error.message
+    };
+  }
+
+  if (error instanceof UnknownPartyFilterError) {
     return {
       status: 400,
       message: error.message

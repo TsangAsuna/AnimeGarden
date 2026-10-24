@@ -96,7 +96,8 @@ export class McpServer {
         inputSchema: searchResourcesInputSchema
       },
       async (args: z.infer<typeof searchResourcesInputSchema>) => {
-        const { filter } = parseURLSearch(undefined, args);
+        // MCP agents default to strict matching so unknown fansub/publisher names surface as errors.
+        const { filter } = parseURLSearch(undefined, { ...args, strict: args.strict ?? true });
 
         this.logger.info(`Start searching resources`, filter);
 

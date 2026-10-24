@@ -12,6 +12,12 @@ export const searchResourcesInputSchema = z
       .describe(
         'Publisher names. Match ANY value (OR). Combined with fansubs in OR logic within this group.'
       ),
+    strict: z
+      .boolean()
+      .optional()
+      .describe(
+        'Fail with an error listing unmatched fansub/publisher names instead of ignoring them. Defaults to true.'
+      ),
     types: z
       .array(z.enum(['动画', '合集', '音乐', '日剧', 'RAW', '漫画', '游戏', '特摄', '其他']))
       .optional()

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { hash } from 'ohash';
 
 import { RESOURCES_TASK_PREFETCH_MAX_COUNT } from '../src/constants';
-import { ResourcesSlowQueryBusyError } from '../src/error';
+import { ResourcesSlowQueryBusyError, UnknownPartyFilterError } from '../src/error';
 import { TitlePool } from '../src/resources/pool';
 import { QueryManager, Task } from '../src/resources/query';
 
@@ -530,5 +530,95 @@ describe('resources notifications', () => {
     });
 
     expect(task.resources.map((resource) => resource.id)).toEqual([3, 1]);
+  });
+});
+
+describe('strict filter names', () => {
+  function createFindManager() {
+    const { manager } = createManager();
+    vi.spyOn(manager, 'findFromTask').mockResolvedValue({ resources: [], hasMore: false });
+
+    (manager.system as any).modules.users = {
+      getByName: (name: string) => (name === 'Sushi' ? { id: 1, name: 'Sushi' } : undefined),
+      ids: new Map([[1, { id: 1, name: 'Sushi' }]])
+    };
+    (manager.system as any).modules.teams = {
+      getByName: (name: string) => (name === 'LMC' ? { id: 2, name: 'LMC' } : undefined),
+      ids: new Map([[2, { id: 2, name: 'LMC' }]])
+    };
+
+    return manager;
+  }
+
+  it('keeps ignoring unknown names by default and echoes them as unmatched', async () => {
+    const manager = createFindManager();
+
+    const resp = await manager.find({ fansubs: ['LMC', '未知字幕组'] }, { page: 1, pageSize: 10 });
+
+    expect(resp.filter.fansubs).toEqual(['LMC']);
+    expect(resp.filter.unmatched).toEqual({ fansubs: ['未知字幕组'], publishers: [] });
+  });
+
+  it('echoes unmatched publishers and keeps resolved ones', async () => {
+    const manager = createFindManager();
+
+    const resp = await manager.find(
+      { publishers: ['Sushi', '未知搬运'] },
+      { page: 1, pageSize: 10 }
+    );
+
+    expect(resp.filter.publishers).toEqual(['Sushi']);
+    expect(resp.filter.unmatched).toEqual({ fansubs: [], publishers: ['未知搬运'] });
+  });
+
+  it('omits the unmatched key when every name resolves', async () => {
+    const manager = createFindManager();
+
+    const resp = await manager.find(
+      { fansubs: ['LMC'], publishers: ['Sushi'] },
+      { page: 1, pageSize: 10 }
+    );
+
+    expect(resp.filter.fansubs).toEqual(['LMC']);
+    expect(resp.filter.publishers).toEqual(['Sushi']);
+    expect(resp.filter).not.toHaveProperty('unmatched');
+  });
+
+  it('fails with UnknownPartyFilterError when strict and names are unknown', async () => {
+    const manager = createFindManager();
+
+    const error = await manager
+      .find(
+        { fansubs: ['未知字幕组'], publishers: ['未知搬运'], strict: true },
+        { page: 1, pageSize: 10 }
+      )
+      .catch((error: unknown) => error);
+
+    expect(error).toBeInstanceOf(UnknownPartyFilterError);
+    expect((error as UnknownPartyFilterError).message).toBe(
+      'Unknown fansubs: 未知字幕组; Unknown publishers: 未知搬运'
+    );
+    expect((error as UnknownPartyFilterError).unmatched).toEqual({
+      fansubs: ['未知字幕组'],
+      publishers: ['未知搬运']
+    });
+  });
+
+  it('stays lenient under strict when every name resolves', async () => {
+    const manager = createFindManager();
+
+    const resp = await manager.find({ fansubs: ['LMC'], strict: true }, { page: 1, pageSize: 10 });
+
+    expect(resp.filter.fansubs).toEqual(['LMC']);
+    expect(resp.filter).not.toHaveProperty('unmatched');
+  });
+
+  it('does not throw under strict when no party filter is given', async () => {
+    const manager = createFindManager();
+
+    const resp = await manager.find({ types: ['动画'], strict: true }, { page: 1, pageSize: 10 });
+
+    expect(resp.filter.types).toEqual(['动画']);
+    expect(resp.filter).not.toHaveProperty('unmatched');
   });
 });

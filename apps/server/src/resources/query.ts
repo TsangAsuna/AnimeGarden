@@ -40,7 +40,12 @@ import {
   RESOURCES_TASK_PREFETCH_COUNT,
   RESOURCES_TASK_PREFETCH_MAX_COUNT
 } from '../constants.ts';
-import { ResourcesSlowQueryBusyError, ResourcesSlowQueryTimeoutError } from '../error.ts';
+import {
+  type UnknownPartyFilters,
+  ResourcesSlowQueryBusyError,
+  ResourcesSlowQueryTimeoutError,
+  UnknownPartyFilterError
+} from '../error.ts';
 
 import type { DatabaseResource, RedisQueryResource, DatabaseFilterOptions } from './types.ts';
 
@@ -80,6 +85,29 @@ const RESOURCES_SLOW_QUERY_LOCK_KEY = 1;
 
 const REDIS_QUERY_TIMEOUT_MS = 500;
 const REDIS_QUERY_COOLDOWN_MS = 30_000;
+
+/** Resolves party names into ids while keeping the unmatched original names in order. */
+function resolvePartyNames(
+  names: string[] | undefined,
+  resolve: (name: string) => number | undefined
+): { ids: number[] | undefined; unmatched: string[] } {
+  if (!names) {
+    return { ids: undefined, unmatched: [] };
+  }
+
+  const ids: number[] = [];
+  const unmatched: string[] = [];
+  for (const name of names) {
+    const id = resolve(name);
+    if (id === undefined) {
+      unmatched.push(name);
+    } else {
+      ids.push(id);
+    }
+  }
+
+  return { ids, unmatched };
+}
 
 export class QueryManager {
   public readonly system: System;
@@ -177,7 +205,16 @@ export class QueryManager {
   }
 
   public async find(filter: ResolvedFilterOptions, pagination: ResolvedPaginationOptions) {
-    const dbOptions = this.normalizeDatabaseFilterOptions(filter);
+    const { options: dbOptions, unmatched } = this.normalizeDatabaseFilterOptions(filter);
+
+    // Strict mode fails the request on unresolved party names instead of silently dropping them.
+    if (
+      filter.strict === true &&
+      (unmatched.fansubs.length > 0 || unmatched.publishers.length > 0)
+    ) {
+      throw new UnknownPartyFilterError(unmatched);
+    }
+
     const { resources, hasMore } = await this.findFromTask(
       dbOptions,
       pagination.page,
@@ -199,7 +236,9 @@ export class QueryManager {
         fansubs: dbOptions.fansubs?.map((p) => teams.ids.get(p)?.name!),
         before: dbOptions.before?.toISOString(),
         after: dbOptions.after?.toISOString(),
-        subjects: dbOptions.subjects
+        subjects: dbOptions.subjects,
+        // Echo unmatched names only when they exist so default responses stay unchanged.
+        ...(unmatched.fansubs.length > 0 || unmatched.publishers.length > 0 ? { unmatched } : {})
       }
     };
   }
@@ -371,49 +410,63 @@ export class QueryManager {
     return true;
   }
 
-  private normalizeDatabaseFilterOptions(filter: ResolvedFilterOptions): DatabaseFilterOptions {
+  /**
+   * Resolves party names into database ids and reports the names matching no known party.
+   */
+  private normalizeDatabaseFilterOptions(filter: ResolvedFilterOptions): {
+    options: DatabaseFilterOptions;
+
+    unmatched: UnknownPartyFilters;
+  } {
     const { users, teams } = this.system.modules;
 
+    const publishers = resolvePartyNames(filter.publishers, (name) => users.getByName(name)?.id);
+    const fansubs = resolvePartyNames(filter.fansubs, (name) => teams.getByName(name)?.id);
+
     return {
-      preset: filter.preset,
-      provider: filter.provider,
-      duplicate: filter.duplicate,
-      publishers: filter.publishers
-        ?.map((p) => users.getByName(p)?.id)
-        .filter((p) => p !== undefined),
-      fansubs: filter.fansubs?.map((p) => teams.getByName(p)?.id).filter((p) => p !== undefined),
-      types: filter.types,
-      before: filter.before,
-      after: filter.after,
-      subjects: filter.subjects,
-      search:
-        filter.search && filter.search.length > 0
-          ? filter.search
-              ?.map((t) => removePunctuations(t.trim()))
-              ?.filter(Boolean)
-              ?.map((t) => normalizeTitle(t).toLowerCase())
-          : undefined,
-      include:
-        filter.include && filter.include.length > 0
-          ? filter.include
-              ?.map((t) => t.trim())
-              ?.filter(Boolean)
-              ?.map((t) => normalizeTitle(t).toLowerCase())
-          : undefined,
-      keywords:
-        filter.keywords && filter.keywords.length > 0
-          ? filter.keywords
-              ?.map((t) => t.trim())
-              ?.filter(Boolean)
-              ?.map((t) => normalizeTitle(t).toLowerCase())
-          : filter.keywords,
-      exclude:
-        filter.exclude && filter.exclude.length > 0
-          ? filter.exclude
-              ?.map((t) => t.trim())
-              ?.filter(Boolean)
-              ?.map((t) => normalizeTitle(t).toLowerCase())
-          : undefined
+      options: {
+        preset: filter.preset,
+        provider: filter.provider,
+        duplicate: filter.duplicate,
+        publishers: publishers.ids,
+        fansubs: fansubs.ids,
+        types: filter.types,
+        before: filter.before,
+        after: filter.after,
+        subjects: filter.subjects,
+        search:
+          filter.search && filter.search.length > 0
+            ? filter.search
+                ?.map((t) => removePunctuations(t.trim()))
+                ?.filter(Boolean)
+                ?.map((t) => normalizeTitle(t).toLowerCase())
+            : undefined,
+        include:
+          filter.include && filter.include.length > 0
+            ? filter.include
+                ?.map((t) => t.trim())
+                ?.filter(Boolean)
+                ?.map((t) => normalizeTitle(t).toLowerCase())
+            : undefined,
+        keywords:
+          filter.keywords && filter.keywords.length > 0
+            ? filter.keywords
+                ?.map((t) => t.trim())
+                ?.filter(Boolean)
+                ?.map((t) => normalizeTitle(t).toLowerCase())
+            : filter.keywords,
+        exclude:
+          filter.exclude && filter.exclude.length > 0
+            ? filter.exclude
+                ?.map((t) => t.trim())
+                ?.filter(Boolean)
+                ?.map((t) => normalizeTitle(t).toLowerCase())
+            : undefined
+      },
+      unmatched: {
+        fansubs: fansubs.unmatched,
+        publishers: publishers.unmatched
+      }
     };
   }
 

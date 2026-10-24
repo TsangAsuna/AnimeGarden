@@ -20,3 +20,26 @@ export class ResourcesDeepPaginationError extends Error {
     this.name = ResourcesDeepPaginationError.name;
   }
 }
+
+export interface UnknownPartyFilters {
+  fansubs: string[];
+
+  publishers: string[];
+}
+
+export class UnknownPartyFilterError extends Error {
+  public readonly unmatched: UnknownPartyFilters;
+
+  public constructor(unmatched: UnknownPartyFilters) {
+    const parts: string[] = [];
+    if (unmatched.fansubs.length > 0) {
+      parts.push(`Unknown fansubs: ${unmatched.fansubs.join(', ')}`);
+    }
+    if (unmatched.publishers.length > 0) {
+      parts.push(`Unknown publishers: ${unmatched.publishers.join(', ')}`);
+    }
+    super(parts.join('; '));
+    this.name = UnknownPartyFilterError.name;
+    this.unmatched = unmatched;
+  }
+}

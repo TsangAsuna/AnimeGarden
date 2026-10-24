@@ -2,7 +2,11 @@ import { Hono } from 'hono';
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ResourcesSlowQueryBusyError, ResourcesSlowQueryTimeoutError } from '../src/error';
+import {
+  ResourcesSlowQueryBusyError,
+  ResourcesSlowQueryTimeoutError,
+  UnknownPartyFilterError
+} from '../src/error';
 import { defineFeedRoutes } from '../src/server/routes/feed';
 import { defineResourcesRoutes } from '../src/server/routes/resources';
 import type { AppEnv } from '../src/server/utils/hono';
@@ -262,5 +266,70 @@ describe('server slow query errors', () => {
       status: 'ERROR',
       message: 'Resources pagination is too deep. Please keep offset + limit <= 10000.'
     });
+  });
+
+  it('returns JSON 400 listing unmatched names for /resources under strict mode', async () => {
+    const find = vi
+      .fn()
+      .mockRejectedValue(new UnknownPartyFilterError({ fansubs: ['未知字幕组'], publishers: [] }));
+    const app = createResourcesAppWithFind(find);
+
+    const response = await app.request('http://localhost/resources?fansub=未知字幕组&strict=true');
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      status: 'ERROR',
+      message: 'Unknown fansubs: 未知字幕组'
+    });
+  });
+
+  it('returns XML 400 listing unmatched names for /feed.xml under strict mode', async () => {
+    const app = createFeedApp(
+      new UnknownPartyFilterError({ fansubs: [], publishers: ['未知搬运', 'Sushi'] })
+    );
+
+    const response = await app.request('http://localhost/feed.xml?publisher=未知搬运&strict=true');
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get('content-type')).toContain('application/xml');
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    const xml = await response.text();
+    expect(XMLValidator.validate(xml)).toBe(true);
+    expect(xml).toContain('<message>Unknown publishers: 未知搬运, Sushi</message>');
+  });
+
+  it('propagates the strict parameter into the query filter', async () => {
+    const find = vi.fn().mockResolvedValue({
+      resources: [],
+      pagination: { page: 1, pageSize: 100, complete: true },
+      filter: {}
+    });
+    const app = createResourcesAppWithFind(find);
+
+    const response = await app.request('http://localhost/resources?fansub=LMC&strict=true');
+
+    expect(response.status).toBe(200);
+    expect(find).toHaveBeenCalledWith(
+      expect.objectContaining({ fansubs: ['LMC'], strict: true }),
+      expect.objectContaining({ page: 1, pageSize: 100 })
+    );
+  });
+
+  it('omits strict from the query filter when the parameter is absent', async () => {
+    const find = vi.fn().mockResolvedValue({
+      resources: [],
+      pagination: { page: 1, pageSize: 100, complete: true },
+      filter: {}
+    });
+    const app = createResourcesAppWithFind(find);
+
+    const response = await app.request('http://localhost/resources?fansub=LMC');
+
+    expect(response.status).toBe(200);
+    expect(find).toHaveBeenCalledWith(
+      expect.objectContaining({ fansubs: ['LMC'] }),
+      expect.anything()
+    );
+    expect(find.mock.calls[0][0]).not.toHaveProperty('strict');
   });
 });

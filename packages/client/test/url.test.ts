@@ -249,6 +249,57 @@ describe('duplicate filter', () => {
   });
 });
 
+describe('strict filter', () => {
+  it.each([
+    ['true', true],
+    ['1', true],
+    ['false', undefined],
+    ['0', undefined],
+    ['off', undefined],
+    ['other', undefined]
+  ])('parses strict=%s as %s in URL and body', (value, expected) => {
+    const params = new URLSearchParams({ strict: value });
+    expect(parseURLSearch(params).filter.strict).toBe(expected);
+    // HTTP JSON bodies may contain strings even though the SDK accepts booleans.
+    const body = JSON.parse(JSON.stringify({ strict: value }));
+    expect(parseURLSearch(undefined, body).filter.strict).toBe(expected);
+  });
+
+  it('omits an unset strict from the resolved filter', () => {
+    expect(parseURLSearch(new URLSearchParams()).filter).not.toHaveProperty('strict');
+    expect(parseURLSearch(undefined, {}).filter).not.toHaveProperty('strict');
+  });
+
+  it('accepts boolean strict in JSON bodies', () => {
+    expect(parseURLSearch(undefined, { strict: true }).filter.strict).toBe(true);
+    expect(parseURLSearch(undefined, { strict: false }).filter).not.toHaveProperty('strict');
+  });
+
+  it('gives the URL precedence over the body like duplicate', () => {
+    expect(
+      parseURLSearch(new URLSearchParams('strict=false'), { strict: true }).filter
+    ).not.toHaveProperty('strict');
+    expect(
+      parseURLSearch(new URLSearchParams('strict=true'), { strict: false }).filter.strict
+    ).toBe(true);
+  });
+
+  it('serializes only an explicitly enabled strict', () => {
+    expect(stringifyURLSearch({ strict: true }).get('strict')).toBe('true');
+    expect(stringifyURLSearch({ strict: false }).has('strict')).toBe(false);
+    expect(stringifyURLSearch({}).has('strict')).toBe(false);
+  });
+
+  it('round trips strict through a URL', () => {
+    const params = stringifyURLSearch({ fansub: 'LMC', strict: true });
+    expect(parseURLSearch(params).filter).toEqual({ fansubs: ['LMC'], strict: true });
+
+    const lenient = stringifyURLSearch({ fansub: 'LMC' });
+    expect(lenient.has('strict')).toBe(false);
+    expect(parseURLSearch(lenient).filter).toEqual({ fansubs: ['LMC'] });
+  });
+});
+
 describe('parse url with body', () => {
   it('should work', () => {
     expect(parseURLSearch(new URLSearchParams(), { page: 2 })).toMatchInlineSnapshot(`

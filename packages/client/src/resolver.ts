@@ -30,9 +30,16 @@ const duplicateParam = z
   .transform((value) => !['', 'false', '0', 'off', 'no'].includes(value))
   .nullish();
 
+// Enable strict matching only on an explicit 'true'/'1'; every other value falls back to lenient.
+const strictParam = z
+  .string()
+  .transform((value) => ['true', '1'].includes(value))
+  .nullish();
+
 const UrlSearchSchema = {
   provider: providerEnum.optional(),
   duplicate: duplicateParam,
+  strict: strictParam,
   page: z.union([z.null(), z.undefined(), z.coerce.number()]).optional(),
   pageSize: z.union([z.null(), z.undefined(), z.coerce.number()]).optional(),
   fansub: z.string().array().optional(),
@@ -51,6 +58,7 @@ const UrlSearchSchema = {
 const BodySchema = {
   provider: providerEnum.optional(),
   duplicate: z.union([z.boolean(), duplicateParam]),
+  strict: z.union([z.boolean(), strictParam]),
   page: z.coerce.number().optional(),
   pageSize: z.coerce.number().optional(),
   fansub: z.string().optional(),
@@ -78,6 +86,7 @@ export function parseURLSearch(
     ? {
         provider: UrlSearchSchema.provider.safeParse(params.get('provider')).data,
         duplicate: UrlSearchSchema.duplicate.safeParse(params.get('duplicate')).data,
+        strict: UrlSearchSchema.strict.safeParse(params.get('strict')).data,
         page: UrlSearchSchema.page.safeParse(params.get('page')).data,
         pageSize: UrlSearchSchema.pageSize.safeParse(params.get('pageSize')).data,
         fansub: UrlSearchSchema.fansub.safeParse(params.getAll('fansub')).data,
@@ -98,6 +107,7 @@ export function parseURLSearch(
     ? {
         provider: BodySchema.provider.safeParse(body.provider).data,
         duplicate: BodySchema.duplicate.safeParse(body.duplicate).data,
+        strict: BodySchema.strict.safeParse(body.strict).data,
         page: BodySchema.page.safeParse(body.page).data,
         pageSize: BodySchema.pageSize.safeParse(body.pageSize).data,
         fansub: BodySchema.fansub.safeParse(body.fansub).data,
@@ -154,6 +164,11 @@ export function parseURLSearch(
   } else if (res1?.provider) {
     filter.provider = res1.provider;
     filter.duplicate = res2?.duplicate ?? res1?.duplicate ?? true;
+  }
+
+  // Only an explicitly requested strict mode appears in the resolved filter.
+  if ((res1?.strict ?? res2?.strict) === true) {
+    filter.strict = true;
   }
 
   if (res2?.fansub) {
@@ -249,7 +264,7 @@ export function stringifyURLSearch(
 ) {
   const params = new URLSearchParams();
 
-  const { page, pageSize, duplicate, after, before, preset } = options;
+  const { page, pageSize, duplicate, strict, after, before, preset } = options;
 
   if (preset) {
     params.set('preset', preset);
@@ -264,6 +279,10 @@ export function stringifyURLSearch(
   // Preserve explicit false so a URL round trip does not restore the provider default.
   if (duplicate !== undefined) {
     params.set('duplicate', String(duplicate));
+  }
+  // Only an explicitly enabled strict mode is persisted, keeping default URLs unchanged.
+  if (strict === true) {
+    params.set('strict', 'true');
   }
   if (after) {
     const time = after instanceof Date ? after.getTime() : new Date(after).getTime();
